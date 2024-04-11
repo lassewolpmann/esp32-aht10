@@ -1,17 +1,25 @@
 #include <Arduino.h>
 #include <Adafruit_AHTX0.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <PubSubClient.h>
 #include <ArduinoJson.h>
+
+#include "secrets.h"
 
 #define POWER_LED 19
 #define WIFI_LED 18
 #define REQUEST_LED 17
 #define POWER_BUTTON 16
 
-const char* ssid = "A17";
-const char* password = "kaukonen";
-const char* serverName = "http://192.168.1.201:5173/api/data";
+// Set WiFi Credentials
+const char ssid[] = SECRET_SSID;
+const char password[] = SECRET_PASS;
+
+// Set MQTT
+const char broker[] = "temphumidity.lan";
+
+WiFiClient wifiClient;
+PubSubClient mqttClient(wifiClient);
 
 int last_button_state;
 
@@ -23,10 +31,39 @@ unsigned long delay_time = 10000;
 
 Adafruit_AHTX0 aht;
 WiFiClient client;
-HTTPClient http;
+
+void callback(char* topic, byte* payload, unsigned int length) {
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("] ");
+    for (int i = 0; i < length; i++) {
+        Serial.print((char)payload[i]);
+    }
+    Serial.println();
+}
+
+void reconnect() {
+    // Loop until we're reconnected
+    while (!mqttClient.connected()) {
+        Serial.print("Attempting MQTT connection...");
+        // Attempt to connect
+        if (mqttClient.connect("ESP32Client", "lasse", "lasse")) {
+            Serial.println("connected");
+            mqttClient.subscribe("esp32/temp");
+            mqttClient.subscribe("esp32/humidity");
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(mqttClient.state());
+            Serial.println(" try again in 5 seconds");
+            // Wait 5 seconds before retrying
+            delay(5000);
+        }
+    }
+}
 
 void setup() {
     Serial.begin(9600);
+
     pinMode(POWER_BUTTON, INPUT);
     pinMode(POWER_LED, OUTPUT);
     pinMode(REQUEST_LED, OUTPUT);
@@ -57,6 +94,9 @@ void setup() {
 
     Serial.print("\nIP address: ");
     Serial.println(WiFi.localIP());
+
+    mqttClient.setServer(broker, 1883);
+    mqttClient.setCallback(callback);
 }
 
 void loop() {
@@ -81,34 +121,30 @@ void loop() {
         digitalWrite(WIFI_LED, LOW);
     }
 
-    if (power_state && wifi_state && ((millis() - last_time) > delay_time)) {
+    if (!mqttClient.connected()) {
+        reconnect();
+    }
+
+    if (power_state && wifi_state && mqttClient.connected() && ((millis() - last_time) > delay_time)) {
         Serial.println("Sending Request");
         sensors_event_t humidity, temp;
         aht.getEvent(&humidity, &temp);
 
-        http.begin(client, serverName);
-        http.addHeader("Content-Type", "application/json");
-
         JsonDocument doc;
-        String request;
+        char request[1000];
 
         doc["temp"] = temp.temperature;
         doc["humidity"] = humidity.relative_humidity;
 
         serializeJson(doc, request);
+        mqttClient.publish("temphumidity", request);
 
-        int httpResponseCode = http.POST(request);
+        Serial.println(request);
 
-        Serial.print("HTTP Response code: ");
-        Serial.println(httpResponseCode);
+        digitalWrite(REQUEST_LED, HIGH);
+        delay(100);
+        digitalWrite(REQUEST_LED, LOW);
 
-        if (httpResponseCode == 200) {
-            digitalWrite(REQUEST_LED, HIGH);
-            delay(100);
-            digitalWrite(REQUEST_LED, LOW);
-        }
-
-        http.end();
         last_time = millis();
     }
 }
