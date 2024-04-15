@@ -47,10 +47,9 @@ void reconnect() {
     while (!mqttClient.connected()) {
         Serial.print("Attempting MQTT connection...");
         // Attempt to connect
-        if (mqttClient.connect("ESP32Client", "lasse", "lasse")) {
+        if (mqttClient.connect("ESP32Client", MQTT_USER, MQTT_PASSWORD)) {
             Serial.println("connected");
-            mqttClient.subscribe("esp32/temp");
-            mqttClient.subscribe("esp32/humidity");
+            mqttClient.subscribe("temphumidity");
         } else {
             Serial.print("failed, rc=");
             Serial.print(mqttClient.state());
@@ -137,9 +136,11 @@ void loop() {
         doc["humidity"] = humidity.relative_humidity;
 
         serializeJson(doc, request);
+
         mqttClient.publish("temphumidity", request);
 
-        Serial.println(request);
+        Serial.print("Temperature: "); Serial.println(temp.temperature);
+        Serial.print("Humidity: "); Serial.println(humidity.relative_humidity);
 
         digitalWrite(REQUEST_LED, HIGH);
         delay(100);
